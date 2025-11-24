@@ -54,8 +54,10 @@ class Embedding(nn.Module):
         )
     
     def forward(self, token_ids: Int[Tensor, " ..."]) -> Float[Tensor, " ... d_model"]:
-        return self.weight[token_ids, :]
-    
+        token_ids = token_ids.to("cuda")
+        # print(f"token_ids device and dtype: {token_ids.device}, {token_ids.dtype}")
+        # print(f"weight device and dtype: {self.weight.device}, {self.weight.dtype}")
+        return self.weight[token_ids]
     def extra_repr(self):
         return f"vocab_size={self.weight.shape[0]}, d={self.weight.shape[1]}"
 
@@ -241,7 +243,6 @@ class BasicsTransformerLM(nn.Module):
 
         # (batch size, sequence_length, d_model)
         x = self.token_embeddings(x)
-
         for layer in self.layers:
             # (batch size, sequence_length, d_model)
             x = layer(x)

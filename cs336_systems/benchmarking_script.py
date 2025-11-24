@@ -50,9 +50,14 @@ def benchmark_model(model, args):
                 num_layers=num_layers, num_heads=num_heads, d_ff=d_ff, \
                 rope_theta=rope_theta)
 
-    input_data = torch.randint(0, 10000, (8, 512)).to(device)
+    input_data = torch.randint(0, 10000, (8, context_length)).to(device)
+    
+    # number of parameters
+    num_params = sum(p.numel() for p in model.parameters())
+    print(f"number of parameters in model size : {num_params/1e6:.3f}M")
 
     for _ in range(5):
+        model = model.to(device)
         output = model(input_data)
     torch.cuda.synchronize()
     times = []
@@ -60,7 +65,6 @@ def benchmark_model(model, args):
     for trials in range(num_trials):
         torch.cuda.synchronize()
         start_time = time.time()
-        model = model.to(device)
         model(input_data)
         torch.cuda.synchronize()
         end_time = time.time()
