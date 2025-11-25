@@ -67,10 +67,12 @@ def benchmark_model(model, args):
     fwd_times = []
     num_trials = 10
     for trials in range(num_trials):
+        datatype = getattr(torch, args.dtype)
         torch.cuda.synchronize()
         start_time = time.time()
-        model(input_data)
-        torch.cuda.synchronize()
+        with torch.cuda.amp.autocast(dtype=datatype):
+            model(input_data)
+            torch.cuda.synchronize()
         end_time = time.time()
         fwd_times.append(end_time - start_time)
         model.zero_grad()
@@ -85,15 +87,18 @@ def benchmark_model(model, args):
 
     bwd_times = []
     for _ in range(num_trials):
+        model.train()
+        datatype = getattr(torch, args.dtype)
         torch.cuda.synchronize()
         start_time = time.time()
-        output = model(input_data)
-        loss = output.sum()
-        loss.backward()
-        torch.cuda.synchronize()
+        with torch.cuda.amp.autocast(dtype=datatype):
+            output = model(input_data)
+            loss = output.sum()
+            model.zero_grad()
+            loss.backward()
+            torch.cuda.synchronize()
         end_time = time.time()
         bwd_times.append(end_time - start_time)
-        model.zero_grad()
     avg_time_bwd = sum(bwd_times) / num_trials
     variance_bwd = torch.var(torch.tensor(bwd_times)).item()
     # cleanup
@@ -115,8 +120,16 @@ if __name__ == "__main__":
         default=1,
         help="Whether to perform warmup runs before benchmarking"
     )
+
+    parser.add_argument(
+        "--dtype",
+        type=str,
+        default="float32",
+        help="Data type for mixed precision (float16, bfloat16, float32)"
+    )
+
     args = parser.parse_args()
-    path_to_save = f"benchmark_with_warmup.csv" if args.warmup else f"benchmark_without_warmup.csv"
+    path_to_save = f"benchmark_with_warmup_{args.dtype}.csv" if args.warmup else f"benchmark_without_warmup_{args.dtype}.csv"
 
     if os.path.exists(path_to_save):
         df = pd.read_csv(path_to_save)
