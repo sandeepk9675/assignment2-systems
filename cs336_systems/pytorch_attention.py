@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import time
 import pandas as pd
+import argparse
 
 batch_size = 8
 num_passes = 100
@@ -29,112 +30,125 @@ class pytorch_attention(nn.Module):
         return out
 
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--torch_compile', type=bool, default=False, help='Use torch.compile for optimization')
+    args = parser.parse_args()
 
-# 1) Collect results in long-form list
-rows_fwd = []
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-for hd in head_dim_list:
-    for sq in seq_len_list:
+    # 1) Collect results in long-form list
+    rows_fwd = []
 
-        model = pytorch_attention(hd, sq)
-        x = torch.randn(batch_size, sq, hd)
-        model.to(device)
-        x = x.to(device)
+    if args.torch_compile:
+        print("hello world")
 
-        # warmup
-        for _ in range(num_warmup_runs):
-            _ = model.forward(x)
+    for hd in head_dim_list:
+        for sq in seq_len_list:
 
-        torch.cuda.synchronize()
-        start_fwd = time.time()
+            model = pytorch_attention(hd, sq)
+            x = torch.randn(batch_size, sq, hd)
+            if args.torch_compile:
+                model = torch.compile(model)
+            model.to(device)
+            x = x.to(device)
 
-        for _ in range(num_passes):
-            _ = model.forward(x)
+            # warmup
+            for _ in range(num_warmup_runs):
+                _ = model.forward(x)
 
-        torch.cuda.synchronize()
-        end_fwd = time.time()
+            torch.cuda.synchronize()
+            start_fwd = time.time()
 
-        total_time = end_fwd - start_fwd
+            for _ in range(num_passes):
+                _ = model.forward(x)
 
-        rows_fwd.append({
-            "head_dim": hd,
-            "seq_len": sq,
-            "time_sec": total_time
-        })
+            torch.cuda.synchronize()
+            end_fwd = time.time()
 
-# 2) Convert to DataFrame
-df = pd.DataFrame( rows_fwd)
+            total_time = end_fwd - start_fwd
 
-# 3) Pivot to matrix/table format
-pivot_df = df.pivot(index="head_dim", columns="seq_len", values="time_sec")
+            rows_fwd.append({
+                "head_dim": hd,
+                "seq_len": sq,
+                "time_sec": total_time
+            })
 
-# 4) Save matrix-style CSV
-pivot_df.to_csv("attention_matri_forward_profile_time.csv")
+    # 2) Convert to DataFrame
+    df = pd.DataFrame( rows_fwd)
 
-print("\nSaved CSV as attention_matrix_profile_time.csv")
-print(pivot_df)
+    # 3) Pivot to matrix/table format
+    pivot_df = df.pivot(index="head_dim", columns="seq_len", values="time_sec")
 
-print('-'*80)
+    # 4) Save matrix-style CSV
+    pivot_df.to_csv(f"attention_matrix_forward_profile_time_torch_compile{args.torch_compile}.csv")
+
+    print(f"\nSaved CSV as attention_matrix_forward_profile_time_torch_compile{args.torch_compile}.csv")
+    print(pivot_df)
+
+    print('-'*80)
 
 
-# backward pass profiling
-rows_bwd = []
+    # backward pass profiling
+    rows_bwd = []
 
-for hd in head_dim_list:
-    for sq in seq_len_list:
+    for hd in head_dim_list:
+        for sq in seq_len_list:
 
-        model = pytorch_attention(hd, sq)
-        x = torch.randn(batch_size, sq, hd)
-        model.to(device)
-        x = x.to(device)
+            model = pytorch_attention(hd, sq)
+            x = torch.randn(batch_size, sq, hd)
+            if args.torch_compile:
+                import code; code.interact(local=dict(globals(), **locals()))
+                model = torch.compile(model)
+            model.to(device)
+            x = x.to(device)
 
-        # warmup
-        for _ in range(num_warmup_runs):
+            # warmup
+            for _ in range(num_warmup_runs):
+                out = model.forward(x)
+                loss = out.sum()
+                loss.backward()
+
+            torch.cuda.synchronize()
+            
+            # Measure memory before backward pass
             out = model.forward(x)
             loss = out.sum()
-            loss.backward()
+            torch.cuda.synchronize()
+            mem_before_backward = torch.cuda.memory_allocated() / 1e9
+            
+            start_bwd = time.time()
 
-        torch.cuda.synchronize()
-        
-        # Measure memory before backward pass
-        out = model.forward(x)
-        loss = out.sum()
-        torch.cuda.synchronize()
-        mem_before_backward = torch.cuda.memory_allocated() / 1e9
-        
-        start_bwd = time.time()
+            for _ in range(num_passes):
+                out = model.forward(x)
+                loss = out.sum()
+                loss.backward()
+                model.zero_grad()
 
-        for _ in range(num_passes):
-            out = model.forward(x)
-            loss = out.sum()
-            loss.backward()
-            model.zero_grad()
+            torch.cuda.synchronize()
+            end_bwd = time.time()
 
-        torch.cuda.synchronize()
-        end_bwd = time.time()
+            total_time = end_bwd - start_bwd
 
-        total_time = end_bwd - start_bwd
+            rows_bwd.append({
+                "head_dim": hd,
+                "seq_len": sq,
+                "time_sec": total_time,
+                "memory_before_backward_gb": mem_before_backward
+            })
 
-        rows_bwd.append({
-            "head_dim": hd,
-            "seq_len": sq,
-            "time_sec": total_time,
-            "memory_before_backward_gb": mem_before_backward
-        })
+    # 2) Convert to DataFrame
+    df_bwd = pd.DataFrame(rows_bwd)
 
-# 2) Convert to DataFrame
-df_bwd = pd.DataFrame(rows_bwd)
+    # 3) Create separate pivot tables for time and memory
+    pivot_df_bwd_time = df_bwd.pivot(index="head_dim", columns="seq_len", values="time_sec")
+    pivot_df_bwd_memory = df_bwd.pivot(index="head_dim", columns="seq_len", values="memory_before_backward_gb")
 
-# 3) Create separate pivot tables for time and memory
-pivot_df_bwd_time = df_bwd.pivot(index="head_dim", columns="seq_len", values="time_sec")
-pivot_df_bwd_memory = df_bwd.pivot(index="head_dim", columns="seq_len", values="memory_before_backward_gb")
+    # 4) Save both CSV files
+    pivot_df_bwd_time.to_csv(f"attention_matrix_backward_profile_time_torch_compile{args.torch_compile}.csv")
+    pivot_df_bwd_memory.to_csv(f"attention_matrix_backward_memory_before_backward_torch_compile{args.torch_compile}.csv")
 
-# 4) Save both CSV files
-pivot_df_bwd_time.to_csv("attention_matrix_backward_profile_time.csv")
-pivot_df_bwd_memory.to_csv("attention_matrix_backward_memory_before_backward.csv")
-
-print("\nBackward pass timing:")
-print(pivot_df_bwd_time)
-print("\nMemory before backward (GB):")
-print(pivot_df_bwd_memory)
+    print("\nBackward pass timing:")
+    print(pivot_df_bwd_time)
+    print("\nMemory before backward (GB):")
+    print(pivot_df_bwd_memory)
