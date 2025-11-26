@@ -32,7 +32,7 @@ class pytorch_attention(nn.Module):
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # 1) Collect results in long-form list
-rows = []
+rows_fwd = []
 
 for hd in head_dim_list:
     for sq in seq_len_list:
@@ -47,30 +47,78 @@ for hd in head_dim_list:
             _ = model.forward(x)
 
         torch.cuda.synchronize()
-        start = time.time()
+        start_fwd = time.time()
 
         for _ in range(num_passes):
             _ = model.forward(x)
 
         torch.cuda.synchronize()
-        end = time.time()
+        end_fwd = time.time()
 
-        total_time = end - start
+        total_time = end_fwd - start_fwd
 
-        rows.append({
+        rows_fwd.append({
             "head_dim": hd,
             "seq_len": sq,
             "time_sec": total_time
         })
 
 # 2) Convert to DataFrame
-df = pd.DataFrame(rows)
+df = pd.DataFrame( rows_fwd)
 
 # 3) Pivot to matrix/table format
 pivot_df = df.pivot(index="head_dim", columns="seq_len", values="time_sec")
 
 # 4) Save matrix-style CSV
-pivot_df.to_csv("attention_matrix_profile_time.csv")
+pivot_df.to_csv("attention_matri_forward_profile_time.csv")
 
 print("\nSaved CSV as attention_matrix_profile_time.csv")
 print(pivot_df)
+
+print('-'*80)
+
+
+# backward pass profiling
+rows_bwd = []
+
+for hd in head_dim_list:
+    for sq in seq_len_list:
+
+        model = pytorch_attention(hd, sq)
+        x = torch.randn(batch_size, sq, hd)
+        model.to(device)
+        x = x.to(device)
+
+        # warmup
+        for _ in range(num_warmup_runs):
+            out = model.forward(x)
+            loss = out.sum()
+            loss.backward()
+
+        torch.cuda.synchronize()
+        start_bwd = time.time()
+
+        for _ in range(num_passes):
+            out = model.forward(x)
+            loss = out.sum()
+            loss.backward()
+            model.zero_grad()
+
+        torch.cuda.synchronize()
+        end_bwd = time.time()
+
+        total_time = end_bwd - start_bwd
+
+        rows_bwd.append({
+            "head_dim": hd,
+            "seq_len": sq,
+            "time_sec": total_time
+        })
+
+# 2) Convert to DataFrame
+df_bwd = pd.DataFrame( rows_bwd)
+# 3) Pivot to matrix/table format
+pivot_df_bwd = df_bwd.pivot(index="head_dim", columns="seq_len", values="time_sec")
+# 4) Save matrix-style CSV
+pivot_df_bwd.to_csv("attention_matrix_backward_profile_time.csv")
+print(pivot_df_bwd)
