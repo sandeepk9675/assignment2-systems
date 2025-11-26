@@ -84,6 +84,7 @@ def profile_memory(args):
         context_manager = torch.enable_grad()
 
     for _ in tqdm(range(args.num_trials), desc="Running trials"):
+        torch.cuda.synchronize()
         with context_manager:
             if use_autocast:
                 with torch.cuda.amp.autocast(dtype=dtype):
