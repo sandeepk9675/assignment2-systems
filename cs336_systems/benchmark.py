@@ -50,8 +50,7 @@ def benchmark_model(model, args):
     rope_theta = 10000
 
     model = BasicsTransformerLM(vocab_size, context_length, d_model, \
-                num_layers=num_layers, num_heads=num_heads, d_ff=d_ff, \
-                rope_theta=rope_theta)
+                num_layers, num_heads, d_ff, rope_theta)
 
     input_data = torch.randint(0, 10000, (4, context_length)).to(device)
     
