@@ -96,6 +96,13 @@ for hd in head_dim_list:
             loss.backward()
 
         torch.cuda.synchronize()
+        
+        # Measure memory before backward pass
+        out = model.forward(x)
+        loss = out.sum()
+        torch.cuda.synchronize()
+        mem_before_backward = torch.cuda.memory_allocated() / 1e9
+        
         start_bwd = time.time()
 
         for _ in range(num_passes):
@@ -112,13 +119,22 @@ for hd in head_dim_list:
         rows_bwd.append({
             "head_dim": hd,
             "seq_len": sq,
-            "time_sec": total_time
+            "time_sec": total_time,
+            "memory_before_backward_gb": mem_before_backward
         })
 
 # 2) Convert to DataFrame
-df_bwd = pd.DataFrame( rows_bwd)
-# 3) Pivot to matrix/table format
-pivot_df_bwd = df_bwd.pivot(index="head_dim", columns="seq_len", values="time_sec")
-# 4) Save matrix-style CSV
-pivot_df_bwd.to_csv("attention_matrix_backward_profile_time.csv")
-print(pivot_df_bwd)
+df_bwd = pd.DataFrame(rows_bwd)
+
+# 3) Create separate pivot tables for time and memory
+pivot_df_bwd_time = df_bwd.pivot(index="head_dim", columns="seq_len", values="time_sec")
+pivot_df_bwd_memory = df_bwd.pivot(index="head_dim", columns="seq_len", values="memory_before_backward_gb")
+
+# 4) Save both CSV files
+pivot_df_bwd_time.to_csv("attention_matrix_backward_profile_time.csv")
+pivot_df_bwd_memory.to_csv("attention_matrix_backward_memory_before_backward.csv")
+
+print("\nBackward pass timing:")
+print(pivot_df_bwd_time)
+print("\nMemory before backward (GB):")
+print(pivot_df_bwd_memory)
